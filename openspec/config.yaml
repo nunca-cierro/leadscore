@@ -1,0 +1,84 @@
+schema: spec-driven
+
+context: |
+  Project: leadscore — CRM de prospección con scoring automático (V1 internal use for nuncacierro).
+  Spec source of truth: docs/SPEC.md (261 lines, Spanish).
+  Stack: Next.js 14+ App Router + TypeScript strict + Tailwind CSS + @dnd-kit/core + Supabase (Postgres + Auth, free) + @supabase/supabase-js + Vercel (Hobby) + zod.
+  Architecture: Route Handlers under /app/api/*, no separate server; shared zod schema in lib/schemas/lead.ts. Forbidden: Prisma, Redux/Zustand.
+  Testing: no runner installed yet — vitest arrives in Fase 1, playwright in Fase 4 (SPEC.md §8).
+  Discovered projects: none (Next.js scaffold does not exist yet; Fase 0 runs next).
+  Persistence mode: openspec (file artifacts). Delivery strategy: ask-always (stop if forecast exceeds 400 review-budget lines).
+
+strict_tdd: false
+
+projects: []
+
+testing:
+  strict_tdd: false
+  detected: 2026-09-29
+  note: >-
+    Zero project roots discovered (no package.json/go.mod/pyproject.toml/Cargo.toml at the
+    workspace root or within two directory levels) and no workspace-level test command exists.
+    Strict TDD fails closed to false. Re-evaluate after Fase 0 (scaffold) and Fase 1 (vitest);
+    Fase 1 acceptance criterion mandates a vitest suite covering every API route.
+  projects: []
+  test_layers:
+    - path: "."
+      layer: Unit
+      available: false
+      tool: "— (vitest planned in Fase 1)"
+    - path: "."
+      layer: Integration
+      available: false
+      tool: "—"
+    - path: "."
+      layer: E2E
+      available: false
+      tool: "— (playwright planned in Fase 4)"
+  coverage:
+    - path: "."
+      available: false
+      command: "—"
+  quality_tools:
+    - path: "."
+      tool: Linter
+      available: false
+      command: "—"
+    - path: "."
+      tool: Type checker
+      available: false
+      command: "— (TypeScript strict mandated by SPEC.md §2, arrives with Fase 0 scaffold)"
+    - path: "."
+      tool: Formatter
+      available: false
+      command: "—"
+
+rules:
+  proposal:
+    - Scope to SPEC.md §1 (V1) only; §9 roadmap items are explicitly out of scope for V1.
+    - Include rollback plan for risky changes (schema/RLS changes, data migration).
+    - Respect delivery strategy ask-always: stop and ask if the forecast exceeds 400 review-budget lines.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Align with docs/SPEC.md contracts (§3 schema, §4 API table, §5 UI).
+  design:
+    - Document architecture decisions with rationale (stack is fixed by SPEC.md §2; no substitutions).
+    - Include sequence diagrams for complex flows (drag & drop optimistic PATCH, import flow).
+  tasks:
+    - Group by phase per SPEC.md §8 (Fase 0–4), use hierarchical numbering.
+    - Keep tasks completable in one session.
+    - Never substitute forbidden tech: Prisma, Redux/Zustand.
+  apply:
+    guidelines:
+      - Follow existing code patterns; TypeScript strict mode at all times.
+      - Validate every API route and form with the shared zod schema (lib/schemas/lead.ts).
+      - Re-run strict_tdd resolution once vitest lands (Fase 1) with a workspace-level test command.
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas.
