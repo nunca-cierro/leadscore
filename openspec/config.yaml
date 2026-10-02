@@ -2,8 +2,8 @@ schema: spec-driven
 
 context: |
   Project: leadscore — CRM de prospección con scoring automático (V1 internal use for nuncacierro).
-  Spec source of truth: docs/SPEC.md (261 lines, Spanish).
-  Stack: Next.js 14+ App Router + TypeScript strict + Tailwind CSS + @dnd-kit/core + Supabase (Postgres + Auth, free) + @supabase/supabase-js + Vercel (Hobby) + zod.
+  Spec source of truth: docs/SPEC.md (278 lines, Spanish).
+  Stack: Next.js 14+ App Router + TypeScript strict + Tailwind CSS + @dnd-kit/core + Supabase (Postgres + Auth, free) + @supabase/supabase-js + self-hosted Hetzner (Docker Compose + Caddy) + zod.
   Architecture: Route Handlers under /app/api/*, no separate server; shared zod schema in lib/schemas/lead.ts. Forbidden: Prisma, Redux/Zustand.
   Testing: no runner installed yet — vitest arrives in Fase 1, playwright in Fase 4 (SPEC.md §8).
   Discovered projects: none (Next.js scaffold does not exist yet; Fase 0 runs next).

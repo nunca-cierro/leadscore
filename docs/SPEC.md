@@ -23,7 +23,7 @@
 - Filtros: por vertical, ciudad, score mínimo, estado
 - Importación inicial de los leads existentes del Sheet (migración one-time)
 - Autenticación simple (un solo usuario: Nicolas — login con email/password vía Supabase Auth)
-- Deploy en Vercel (free) + Supabase (free)
+- Deploy self-hosted en Hetzner + Supabase (free)
 
 ### Fuera de alcance (V1) — no construir todavía
 - Scraping/enriquecimiento automático de Instagram/web (ver sección 12, Fase 2)
@@ -45,7 +45,7 @@
 | Base de datos | Supabase (Postgres) | plan free |
 | Auth | Supabase Auth (email/password) | un solo usuario en V1 |
 | ORM/cliente DB | `@supabase/supabase-js` | + tipos generados con `supabase gen types typescript` |
-| Hosting | Vercel (plan Hobby) | integración nativa Supabase-Vercel para env vars |
+| Hosting | Self-hosted Hetzner (Docker Compose + Caddy) | las env vars se gestionan en el entorno de despliegue (.env del servidor / secrets de GitHub Actions) |
 | Validación | `zod` | en cada API route y formulario |
 | Testing | `vitest` (unit) + `playwright` (e2e básico) | mínimo indispensable, ver sección 10 |
 
@@ -204,9 +204,10 @@ Antes de dar por cerrada la Fase 1, el agente encargado debe:
 ```
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=   # solo server-side, nunca exponer al cliente
 ```
-Inyectadas automáticamente por la integración Supabase-Vercel al conectar el proyecto — el agente de deploy debe verificar que existan en Vercel antes de hacer el primer deploy a producción.
+Son las dos variables que el código usa actualmente. Se configuran **manualmente** en el entorno de despliegue (archivo `.env` del servidor / secrets de GitHub Actions) — no las inyecta ninguna integración — y el agente de deploy debe verificar que existan **ahí** antes de hacer el primer deploy a producción.
+
+> Si una fase futura necesita variables solo server-side, se agregan con su propio nombre (sin prefijo) en ese mismo entorno de despliegue y **nunca** van bajo `NEXT_PUBLIC_*` (cualquier `NEXT_PUBLIC_*` queda expuesta en el bundle del cliente).
 
 ---
 
@@ -218,9 +219,11 @@ Inyectadas automáticamente por la integración Supabase-Vercel al conectar el p
 **Agente: `infra`**
 - Crear proyecto Supabase, ejecutar el SQL de la sección 3 (tabla + RLS + trigger)
 - Crear proyecto Next.js con TypeScript + Tailwind
-- Conectar repo a Vercel, instalar integración Supabase-Vercel
+- Escribir `Dockerfile` multi-stage con `output: 'standalone'` de Next.js
+- Agregar el servicio de la app al Docker Compose del servidor y la ruta correspondiente en Caddy (reverse proxy con Let's Encrypt)
+- Crear el workflow de GitHub Actions que despliega en el servidor
 - Generar tipos TS desde el schema de Supabase
-- **Criterio de aceptación:** `npm run dev` levanta la app localmente y conecta a Supabase sin error; deploy inicial ("Hello World") visible en una URL de Vercel
+- **Criterio de aceptación:** `npm run dev` levanta la app localmente y conecta a Supabase sin error; deploy inicial ("Hello World") visible en https://leadscore.nuncacierro.com
 
 ### Fase 1 — Backend (API routes)
 **Agente: `backend`**
@@ -247,15 +250,29 @@ Inyectadas automáticamente por la integración Supabase-Vercel al conectar el p
 - Verificar RLS realmente bloquea acceso sin sesión (probar con `curl` sin cookie de auth)
 - **Criterio de aceptación:** ambos tests e2e pasan; request sin auth a `/api/leads` devuelve 401
 
-**El producto final entregado al usuario debe incluir:** URL de producción en Vercel, credenciales del único usuario (email, no la password en texto plano — se comunica aparte), y este documento actualizado con cualquier decisión tomada durante la implementación que se haya desviado del spec.
+**El producto final entregado al usuario debe incluir:** URL de producción (https://leadscore.nuncacierro.com), credenciales del único usuario (email, no la password en texto plano — se comunica aparte), y este documento actualizado con cualquier decisión tomada durante la implementación que se haya desviado del spec.
 
 ---
 
 ## 9. Fuera del MVP pero documentado para no perder de vista (roadmap)
 
-1. **Enriquecimiento automático:** cron job (Vercel Cron, free tier permite 1/día en Hobby) que visita Instagram/web del lead y auto-marca los booleanos de scoring, eliminando el llenado manual
+1. **Enriquecimiento automático:** cron job en el servidor (n8n ya corre en la misma máquina Hetzner, o un timer de systemd) que visita Instagram/web del lead y auto-marca los booleanos de scoring, eliminando el llenado manual
 2. **Multiusuario / SaaS:** agregar `owner_id` ya está contemplado en el schema (sección 3); falta UI de registro, invitaciones de equipo, y planes de pago (Stripe)
 3. **Métricas de negocio:** portar la hoja "schedule" del Sheet (facturación, cobros pendientes) como módulo separado, reusando la misma base de Supabase
 4. **Notificaciones:** WhatsApp/email automático cuando un lead lleva X días en "Esperando respuesta"
 
 No implementar nada de esta sección en V1. Se documenta aquí para que el orquestador no lo mezcle con el alcance actual ni lo omita al planear la arquitectura de datos (por eso `owner_id` sí se agrega desde ya).
+
+---
+
+## Decisiones de implementación (desviaciones del spec)
+
+El hosting original (Vercel Hobby) se reemplaza por self-hosted; detalle a continuación.
+
+| Aspecto | Detalle |
+|---|---|
+| **Fecha** | 2026-10-02 |
+| **Decisión** | Self-hosted en el servidor Hetzner existente (Ubuntu, Docker Compose + Caddy como reverse proxy con Let's Encrypt, DNS vía Cloudflare proxy) |
+| **Motivo** | Centralizar la infraestructura en un servidor ya existente y operado (mismo stack que NuncaCierro); se elimina la dependencia de una plataforma externa adicional |
+| **Subdominio** | leadscore.nuncacierro.com |
+| **Impacto** | Las variables de entorno ya no las inyecta ninguna integración: se gestionan en el entorno de despliegue (`.env` del servidor / secrets de GitHub Actions). El cron del roadmap pasa de Vercel Cron a n8n/systemd en el servidor |
