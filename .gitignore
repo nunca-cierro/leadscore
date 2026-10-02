@@ -37,8 +37,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# supabase cli temp
-supabase/.temp/
-
 # atl cache
 .atl/.skill-registry.cache.json

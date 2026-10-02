@@ -1,11 +1,13 @@
--- LeadScore — Fase 0: esquema inicial
--- Fuente: docs/SPEC.md sección 3 (tabla + índices + RLS + trigger updated_at)
--- Aplicación manual: Supabase Dashboard → SQL Editor → Run
--- Nota: owner_id se agrega ANTES de la policy según la nota de la sección 3 del spec.
+-- LeadScore — 0001_init: esquema inicial (Postgres vanilla)
+-- Fuente: docs/SPEC.md sección 3 (tabla + índices + trigger updated_at)
+-- Aplicación: psql contra la base propia (contenedor Postgres en Hetzner)
+--   psql "$DATABASE_URL" -f db/migrations/0001_init.sql
+-- Reemplaza la migración anterior gestionada por Supabase (retirada del stack
+-- el 2026-10-02; ver "Decisiones de implementación" en docs/SPEC.md).
+-- Sin RLS ni owner_id: V1 es de un solo usuario y la DB solo se toca desde el backend.
 
 create table leads (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid references auth.users(id) default auth.uid(),
 
   nombre text not null,
   vertical text not null check (vertical in ('restaurante','salud_estetica','barberia','hotel','gimnasio','otro')),
@@ -43,14 +45,6 @@ create table leads (
 create index idx_leads_estado on leads(estado);
 create index idx_leads_vertical on leads(vertical);
 create index idx_leads_score on leads(score desc);
-
--- Row Level Security
-alter table leads enable row level security;
-
-create policy "Solo el owner ve sus leads"
-  on leads for all
-  using (auth.uid() = owner_id)
-  with check (auth.uid() = owner_id);
 
 -- Trigger updated_at
 create or replace function set_updated_at()

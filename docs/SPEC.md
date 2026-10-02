@@ -9,7 +9,7 @@
 
 **Por qué:** Hoy el scoring (8 criterios booleanos) y el movimiento entre estados se hacen a mano en Sheets. Automatizar el scoring y visualizar el pipeline como Kanban acelera la operación y es reusable como producto (SaaS) para otros negocios que hacen outbound.
 
-**V1 = uso interno para nuncacierro.** Multiusuario/SaaS queda en roadmap (sección 12), no en el MVP.
+**V1 = uso interno para nuncacierro, un solo usuario (Nicolas).** Multiusuario/SaaS queda completamente fuera de alcance (sección 1): no hay roadmap prometido, ni `owner_id`, ni RLS en V1.
 
 ---
 
@@ -22,11 +22,11 @@
 - Vista de detalle de lead (notas, historial de fecha de contacto, próxima acción)
 - Filtros: por vertical, ciudad, score mínimo, estado
 - Importación inicial de los leads existentes del Sheet (migración one-time)
-- Autenticación simple (un solo usuario: Nicolas — login con email/password vía Supabase Auth)
-- Deploy self-hosted en Hetzner + Supabase (free)
+- Autenticación simple (un solo usuario: Nicolas — login con email/password vía sesión propia: cookie httpOnly firmada + password con argon2id)
+- Deploy self-hosted en Hetzner (Docker Compose + Caddy), con Postgres corriendo en contenedor propio en el mismo servidor
 
 ### Fuera de alcance (V1) — no construir todavía
-- Scraping/enriquecimiento automático de Instagram/web (ver sección 12, Fase 2)
+- Scraping/enriquecimiento automático de Instagram/web (ver sección 9, roadmap)
 - Multiusuario / equipos / roles
 - Notificaciones automáticas (email/WhatsApp)
 - Facturación y métricas de negocio (la hoja "schedule" del Sheet) — módulo aparte, futuro
@@ -42,18 +42,20 @@
 | Estilos | Tailwind CSS | sin librerías de componentes pesadas |
 | Drag & drop Kanban | `@dnd-kit/core` | más liviano que react-beautiful-dnd |
 | Backend | Next.js Route Handlers (`/app/api/*`) | sin servidor separado |
-| Base de datos | Supabase (Postgres) | plan free |
-| Auth | Supabase Auth (email/password) | un solo usuario en V1 |
-| ORM/cliente DB | `@supabase/supabase-js` | + tipos generados con `supabase gen types typescript` |
+| Base de datos | Postgres (contenedor propio en Hetzner, Docker Compose) | una sola instancia compartida con el resto de servicios del servidor; accedida solo server-side |
+| Auth | Sesión propia (cookie httpOnly firmada + argon2id) | un solo usuario en V1: no hace falta un proveedor de auth |
+| Cliente DB | `pg` (pool server-side) | la DB se habla solo desde Route Handlers; el navegador nunca conecta a la DB |
 | Hosting | Self-hosted Hetzner (Docker Compose + Caddy) | las env vars se gestionan en el entorno de despliegue (.env del servidor / secrets de GitHub Actions) |
 | Validación | `zod` | en cada API route y formulario |
-| Testing | `vitest` (unit) + `playwright` (e2e básico) | mínimo indispensable, ver sección 10 |
+| Testing | `vitest` (unit) + `playwright` (e2e básico) | mínimo indispensable, ver sección 8 (Fases 1 y 4) |
 
-**Restricción explícita:** no usar Prisma (evitar capa extra sobre Supabase en V1), no usar Redux/Zustand (el estado del Kanban se maneja con Server Components + `useOptimistic` o SWR).
+**Restricción explícita:** no usar Prisma (evitar una capa extra sobre Postgres en V1), no usar Redux/Zustand (el estado del Kanban se maneja con Server Components + `useOptimistic` o SWR).
 
 ---
 
 ## 3. Modelo de datos
+
+> El DDL completo vive en `db/migrations/0001_init.sql` (Postgres vanilla, sin dependencias de ningún BaaS). Se aplica contra el contenedor propio con `psql "$DATABASE_URL" -f db/migrations/0001_init.sql`. No hay RLS ni `owner_id`: V1 es de un solo usuario y la DB solo se toca desde el backend.
 
 ### Tabla `leads`
 
@@ -81,7 +83,7 @@ create table leads (
   tiene_catalogo boolean not null default false,
   tiene_equipo boolean not null default false,
 
-  -- score derivado (0-8), calculado por trigger, NO editable manualmente
+  -- score derivado (0-8): columna GENERATED ALWAYS AS ... STORED, NO editable manualmente
   score integer generated always as (
     (mas_2_sedes::int + mas_4_5_estrellas::int + mas_500_followers_ig::int +
      post_constante::int + sin_sitio_web::int + sin_respuesta_wa::int +
@@ -97,17 +99,6 @@ create index idx_leads_estado on leads(estado);
 create index idx_leads_vertical on leads(vertical);
 create index idx_leads_score on leads(score desc);
 ```
-
-### Row Level Security (RLS)
-```sql
-alter table leads enable row level security;
-
-create policy "Solo el owner ve sus leads"
-  on leads for all
-  using (auth.uid() = owner_id)
-  with check (auth.uid() = owner_id);
-```
-> Nota para el agente que implemente esto: agregar columna `owner_id uuid references auth.users(id) default auth.uid()` a la tabla antes de aplicar la policy. Aunque V1 es un solo usuario, dejar RLS bien hecho desde el día uno evita reescribir todo cuando se vuelva multiusuario (Fase 3).
 
 ### Trigger `updated_at`
 ```sql
@@ -128,10 +119,11 @@ create trigger trg_leads_updated_at
 
 ## 4. Contratos de API (Route Handlers)
 
-Todas las rutas bajo `/app/api/leads/`. Todas devuelven JSON. Todas requieren sesión autenticada (verificar `supabase.auth.getUser()` al inicio de cada handler, devolver 401 si no hay sesión).
+Rutas de leads bajo `/app/api/leads/`; la autenticación vive en `/api/auth/`. Todas devuelven JSON. Todas requieren sesión autenticada (verificar la sesión propia — cookie httpOnly firmada — al inicio de cada handler, devolver 401 si no hay sesión), excepto el login. El acceso a la DB es siempre server-side vía pool `pg`; el navegador nunca habla con la base de datos.
 
 | Método | Ruta | Body / Query | Respuesta | Notas |
 |---|---|---|---|---|
+| POST | `/api/auth/login` | `{ email, password }` | `204` + `Set-Cookie` (httpOnly) | única ruta sin sesión previa; 401 en credenciales inválidas; sin registro público (usuario seed) |
 | GET | `/api/leads` | query: `estado?`, `vertical?`, `score_min?`, `ciudad?` | `Lead[]` | filtros combinables |
 | GET | `/api/leads/:id` | — | `Lead` | 404 si no existe |
 | POST | `/api/leads` | `LeadInput` (zod schema, sin `id`/`score`) | `Lead` (201) | valida con zod antes de insertar |
@@ -169,14 +161,15 @@ export const LeadInputSchema = z.object({
 ## 5. UI / Frontend
 
 ### 5.1 Página principal `/` (protegida, redirige a `/login` si no hay sesión)
+- El guard lo hace el middleware propio de sesión (cookie httpOnly): sin sesión válida → redirect a `/login`
 - Layout: barra superior con filtros (vertical, ciudad, score mínimo) + botón "Nuevo lead"
 - Tablero Kanban con 5 columnas (una por `estado`), cada tarjeta muestra: nombre, vertical (chip de color), score como badge visual (ej. círculo con "7/8"), próxima acción
 - Drag & drop entre columnas → dispara `PATCH /api/leads/:id` con el nuevo `estado`, optimista en UI (no esperar respuesta para mover la tarjeta)
 - Click en tarjeta → abre panel lateral (Sheet/Drawer) con detalle completo y formulario de edición
 
 ### 5.2 Página `/login`
-- Formulario simple email/password contra Supabase Auth
-- Sin registro público (el usuario se crea manualmente desde el dashboard de Supabase)
+- Formulario simple email/password contra el endpoint propio de login (`POST /api/auth/login`)
+- Sin registro público (el usuario único se crea en el seed inicial: script `db/seed` o `INSERT` manual)
 
 ### 5.3 Componente de badge de score
 - Visual tipo gauge/círculo de progreso (0-8), color semáforo: rojo (0-3), amarillo (4-6), verde (7-8)
@@ -202,12 +195,14 @@ Antes de dar por cerrada la Fase 1, el agente encargado debe:
 ## 7. Variables de entorno
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+DATABASE_URL=            # server-side ONLY (pool de pg en las Route Handlers)
+SESSION_SECRET=          # server-side ONLY (firma de la cookie de sesión)
+NEXT_PUBLIC_SITE_URL=    # única candidata a NEXT_PUBLIC_* (URL pública del sitio)
 ```
-Son las dos variables que el código usa actualmente. Se configuran **manualmente** en el entorno de despliegue (archivo `.env` del servidor / secrets de GitHub Actions) — no las inyecta ninguna integración — y el agente de deploy debe verificar que existan **ahí** antes de hacer el primer deploy a producción.
 
-> Si una fase futura necesita variables solo server-side, se agregan con su propio nombre (sin prefijo) en ese mismo entorno de despliegue y **nunca** van bajo `NEXT_PUBLIC_*` (cualquier `NEXT_PUBLIC_*` queda expuesta en el bundle del cliente).
+Todas se gestionan **manualmente** en el entorno de despliegue (archivo `.env` del servidor / secrets de GitHub Actions) — no las inyecta ninguna integración — y el agente de deploy debe verificar que existan **ahí** antes de hacer el primer deploy a producción.
+
+> `DATABASE_URL` y `SESSION_SECRET` **nunca** van bajo `NEXT_PUBLIC_*`: cualquier `NEXT_PUBLIC_*` queda expuesta en el bundle del cliente. Ninguna credencial de la DB sale del servidor.
 
 ---
 
@@ -217,18 +212,17 @@ Son las dos variables que el código usa actualmente. Se configuran **manualment
 
 ### Fase 0 — Setup de infraestructura
 **Agente: `infra`**
-- Crear proyecto Supabase, ejecutar el SQL de la sección 3 (tabla + RLS + trigger)
-- Crear proyecto Next.js con TypeScript + Tailwind
+- Crear la base de datos en el contenedor Postgres propio (Docker Compose del servidor) y aplicar `db/migrations/0001_init.sql` con `psql "$DATABASE_URL" -f db/migrations/0001_init.sql` (tabla + índices + trigger)
+- Proyecto Next.js con TypeScript + Tailwind *(hecho: scaffold commiteado)*
 - Escribir `Dockerfile` multi-stage con `output: 'standalone'` de Next.js
-- Agregar el servicio de la app al Docker Compose del servidor y la ruta correspondiente en Caddy (reverse proxy con Let's Encrypt)
-- Crear el workflow de GitHub Actions que despliega en el servidor
-- Generar tipos TS desde el schema de Supabase
-- **Criterio de aceptación:** `npm run dev` levanta la app localmente y conecta a Supabase sin error; deploy inicial ("Hello World") visible en https://leadscore.nuncacierro.com
+- Agregar el servicio de la app **y el servicio `postgres`** al Docker Compose del servidor, y la ruta correspondiente en Caddy (reverse proxy con Let's Encrypt)
+- Crear el workflow de GitHub Actions que despliega en el servidor (con los secrets `DATABASE_URL` y `SESSION_SECRET` definidos ahí)
+- **Criterio de aceptación:** `npm run dev` levanta la app localmente sin error; deploy inicial ("Hello World") visible en https://leadscore.nuncacierro.com
 
 ### Fase 1 — Backend (API routes)
 **Agente: `backend`**
-- Implementar las 6 rutas de la sección 4, con el schema zod compartido
-- Implementar middleware de auth (401 si no hay sesión) en cada ruta
+- Implementar las 6 rutas de la sección 4, con el schema zod compartido y pool `pg` server-side
+- Implementar middleware de sesión propia (401 si no hay cookie válida) en cada ruta
 - **Criterio de aceptación:** suite de tests con `vitest` cubre cada ruta (happy path + 401 + 400 por validación fallida) y pasa en verde
 
 ### Fase 2 — Frontend (Kanban)
@@ -247,7 +241,7 @@ Son las dos variables que el código usa actualmente. Se configuran **manualment
 ### Fase 4 — QA y deploy final
 **Agente: `qa`**
 - Correr `playwright` con al menos 2 flujos e2e: login+crear lead, mover lead de estado
-- Verificar RLS realmente bloquea acceso sin sesión (probar con `curl` sin cookie de auth)
+- Verificar que la sesión propia bloquea el acceso sin cookie (probar con `curl` sin cookie de sesión)
 - **Criterio de aceptación:** ambos tests e2e pasan; request sin auth a `/api/leads` devuelve 401
 
 **El producto final entregado al usuario debe incluir:** URL de producción (https://leadscore.nuncacierro.com), credenciales del único usuario (email, no la password en texto plano — se comunica aparte), y este documento actualizado con cualquier decisión tomada durante la implementación que se haya desviado del spec.
@@ -257,17 +251,16 @@ Son las dos variables que el código usa actualmente. Se configuran **manualment
 ## 9. Fuera del MVP pero documentado para no perder de vista (roadmap)
 
 1. **Enriquecimiento automático:** cron job en el servidor (n8n ya corre en la misma máquina Hetzner, o un timer de systemd) que visita Instagram/web del lead y auto-marca los booleanos de scoring, eliminando el llenado manual
-2. **Multiusuario / SaaS:** agregar `owner_id` ya está contemplado en el schema (sección 3); falta UI de registro, invitaciones de equipo, y planes de pago (Stripe)
-3. **Métricas de negocio:** portar la hoja "schedule" del Sheet (facturación, cobros pendientes) como módulo separado, reusando la misma base de Supabase
-4. **Notificaciones:** WhatsApp/email automático cuando un lead lleva X días en "Esperando respuesta"
+2. **Métricas de negocio:** portar la hoja "schedule" del Sheet (facturación, cobros pendientes) como módulo separado, reusando la misma base de datos
+3. **Notificaciones:** WhatsApp/email automático cuando un lead lleva X días en "Esperando respuesta"
 
-No implementar nada de esta sección en V1. Se documenta aquí para que el orquestador no lo mezcle con el alcance actual ni lo omita al planear la arquitectura de datos (por eso `owner_id` sí se agrega desde ya).
+No implementar nada de esta sección en V1. Se documenta aquí para que el orquestador no lo mezcle con el alcance actual: la arquitectura de datos de V1 es de un solo usuario (sin `owner_id`, sin RLS).
 
 ---
 
 ## Decisiones de implementación (desviaciones del spec)
 
-El hosting original (Vercel Hobby) se reemplaza por self-hosted; detalle a continuación.
+Dos desviaciones, ambas con fecha 2026-10-02: el hosting original (Vercel Hobby) se reemplaza por self-hosted, y Supabase se retira del stack por completo. Detalle a continuación.
 
 | Aspecto | Detalle |
 |---|---|
@@ -276,3 +269,10 @@ El hosting original (Vercel Hobby) se reemplaza por self-hosted; detalle a conti
 | **Motivo** | Centralizar la infraestructura en un servidor ya existente y operado (mismo stack que NuncaCierro); se elimina la dependencia de una plataforma externa adicional |
 | **Subdominio** | leadscore.nuncacierro.com |
 | **Impacto** | Las variables de entorno ya no las inyecta ninguna integración: se gestionan en el entorno de despliegue (`.env` del servidor / secrets de GitHub Actions). El cron del roadmap pasa de Vercel Cron a n8n/systemd en el servidor |
+
+| Aspecto | Detalle |
+|---|---|
+| **Fecha** | 2026-10-02 |
+| **Decisión** | Supabase reemplazado por Postgres self-hosted + auth de sesión propia |
+| **Motivo** | Centralización total en Hetzner + V1 single-user hace innecesario PostgREST/GoTrue/RLS |
+| **Impacto** | Ver secciones afectadas: §1 (alcance/auth), §2 (stack: fila DB/Auth/cliente), §3 (schema sin RLS ni `owner_id`, migración movida a `db/migrations/0001_init.sql` aplicada con psql), §4 (handlers con verificación de sesión propia + pool `pg`), §5 (login contra `POST /api/auth/login`), §7 (env vars `DATABASE_URL`/`SESSION_SECRET`), §8 (Fase 0 sobre el contenedor propio), §9 (roadmap sin Multiusuario/SaaS). Código: eliminados `lib/supabase/`, `lib/database.types.ts` y el directorio `supabase/`; dependencia `@supabase/supabase-js` fuera de `package.json` |

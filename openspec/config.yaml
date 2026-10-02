@@ -3,7 +3,7 @@ schema: spec-driven
 context: |
   Project: leadscore — CRM de prospección con scoring automático (V1 internal use for nuncacierro).
   Spec source of truth: docs/SPEC.md (278 lines, Spanish).
-  Stack: Next.js 14+ App Router + TypeScript strict + Tailwind CSS + @dnd-kit/core + Supabase (Postgres + Auth, free) + @supabase/supabase-js + self-hosted Hetzner (Docker Compose + Caddy) + zod.
+  Stack: Next.js 14+ App Router + TypeScript strict + Tailwind CSS + @dnd-kit/core + Postgres (self-hosted en Hetzner) + auth de sesión propia + self-hosted Hetzner (Docker Compose + Caddy) + zod.
   Architecture: Route Handlers under /app/api/*, no separate server; shared zod schema in lib/schemas/lead.ts. Forbidden: Prisma, Redux/Zustand.
   Testing: no runner installed yet — vitest arrives in Fase 1, playwright in Fase 4 (SPEC.md §8).
   Discovered projects: none (Next.js scaffold does not exist yet; Fase 0 runs next).
@@ -56,7 +56,7 @@ testing:
 rules:
   proposal:
     - Scope to SPEC.md §1 (V1) only; §9 roadmap items are explicitly out of scope for V1.
-    - Include rollback plan for risky changes (schema/RLS changes, data migration).
+    - Include rollback plan for risky changes (schema or data-migration changes).
     - Respect delivery strategy ask-always: stop and ask if the forecast exceeds 400 review-budget lines.
   specs:
     - Use Given/When/Then for scenarios.
