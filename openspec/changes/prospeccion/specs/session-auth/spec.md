@@ -36,13 +36,13 @@ Un guard en `apps/api` MUST exigir sesión válida en toda ruta CRM: sin ella, `
 
 ### Requirement: Aislamiento por tenant vía RLS FORCE
 
-Todo acceso a datos MUST pasar por `withTenant()` (transacción + `SET LOCAL app.current_tenant`) y por políticas RLS `FORCE` default-deny: sin tenant o con tenant ajeno, el resultado MUST ser 0 filas, incluso en conexión de superuser. Una sola cuenta activa en el MVP.
+Todo acceso a datos MUST pasar por `withTenant()` (transacción + `SET LOCAL app.current_tenant`) y por políticas RLS `FORCE` default-deny: sin tenant o con tenant ajeno, el resultado MUST ser 0 filas, incluso con la conexión como dueño de las tablas (FORCE) o como rol de aplicación no-superuser (un superuser bypasea RLS en PostgreSQL). Una sola cuenta activa en el MVP.
 
 #### Scenario: Query sin tenant seteado
 
 - DADO una query ejecutada sin `SET LOCAL app.current_tenant`
 - CUANDO pasa por RLS `FORCE`
-- ENTONCES devuelve 0 filas aunque la conexión sea de superuser
+- ENTONCES devuelve 0 filas incluso con la conexión como dueño de las tablas o rol de aplicación no-superuser (un superuser bypasea RLS)
 
 #### Scenario: Tenant ajeno
 
