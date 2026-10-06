@@ -24,7 +24,7 @@ La landing de venta (root) y `/demo` MUST ser accesibles sin autenticación y MU
 
 ### Requirement: Aislamiento default-deny en rutas públicas
 
-Toda query sobre rutas públicas sin `SET LOCAL app.current_tenant` MUST atravesar RLS `FORCE ROW LEVEL SECURITY` con política default-deny: si el tenant es `NULL`, el resultado MUST ser 0 filas (incluso con conexión de superuser).
+Toda query sobre rutas públicas sin `SET LOCAL app.current_tenant` MUST atravesar RLS `FORCE ROW LEVEL SECURITY` con política default-deny: si el tenant es `NULL`, el resultado MUST ser 0 filas (incluso con la conexión como dueño de las tablas o rol de aplicación no-superuser).
 
 #### Scenario: Bug hipotético en ruta pública
 
