@@ -1,12 +1,13 @@
 schema: spec-driven
 
 context: |
-  Project: leadscore — CRM de prospección con scoring automático (V1 internal use for nuncacierro).
-  Spec source of truth: docs/SPEC.md (278 lines, Spanish).
-  Stack: Next.js 14+ App Router + TypeScript strict + Tailwind CSS + @dnd-kit/core + Postgres (self-hosted en Hetzner) + auth de sesión propia + self-hosted Hetzner (Docker Compose + Caddy) + zod.
-  Architecture: Route Handlers under /app/api/*, no separate server; shared zod schema in lib/schemas/lead.ts. Forbidden: Prisma, Redux/Zustand.
-  Testing: no runner installed yet — vitest arrives in Fase 1, playwright in Fase 4 (SPEC.md §8).
-  Discovered projects: none (Next.js scaffold does not exist yet; Fase 0 runs next).
+  Project: leadscore — motor de prospección y calificación de negocios (D15 negocio-primero: primero la herramienta de NuncaCierro, portfolio como beneficio colateral, escala/SaaS como opción futura).
+  Spec source of truth: docs/SPEC.md (332 lines, Spanish). Contrato del cambio activo: openspec/changes/prospeccion/proposal.md (D1–D16, U1–U9).
+  Stack: monorepo npm workspaces — apps/web (Next.js App Router, SOLO UI, nunca importa pg), apps/api (Fastify + TypeScript, dueño único de DB/auth/negocio), packages/shared (schemas zod + evaluateScore() puro). Forbidden: Supabase, Vercel, Prisma, Redux/Zustand, @dnd-kit, tabla `leads`.
+  Data: Postgres vanilla self-hosted en Hetzner; RLS `FORCE ROW LEVEL SECURITY` default-deny declarada dentro de `0001_init.sql` + helper central `withTenant()` (transacción + `SET LOCAL app.current_tenant`); migraciones SQL versionadas en `db/migrations` con dbmate (SPEC §4 aún define rewrite in-place de `apps/api/db/migrations/0001_init.sql` — reconciliar en U2).
+  Topología D16 (opción D): host único `leadscore.nuncacierro.com` con path routing en Caddy — `/` landing pública + `/demo` (tenant `demo` reservado, sin auth), `/crm/*` = CRM con sesión, `/api/*` → reverse_proxy al contenedor Fastify; single-origin ⇒ CORS solo en dev. Subdominios `app.*`/`api.*` NO existen. Deploy U2b: Hetzner + Docker + GH Actions (registro raíz DNS PROXIED en Cloudflare).
+  Producto: captura (form/CSV) → checks de presencia digital → score configurable → cola priorizada → outreach manual → outcome → contador derivado → dataset ML futuro (fuera del MVP).
+  Testing: vitest por unidad (raíz `npm test` ejecuta workspaces); test de aislamiento RLS obligatorio en U2; Playwright E2E post-MVP.
   Persistence mode: openspec (file artifacts). Delivery strategy: ask-always (stop if forecast exceeds 400 review-budget lines).
 
 strict_tdd: false
@@ -15,26 +16,26 @@ projects: []
 
 testing:
   strict_tdd: false
-  detected: 2026-09-29
+  detected: 2026-10-05
   note: >-
-    Zero project roots discovered (no package.json/go.mod/pyproject.toml/Cargo.toml at the
-    workspace root or within two directory levels) and no workspace-level test command exists.
-    Strict TDD fails closed to false. Re-evaluate after Fase 0 (scaffold) and Fase 1 (vitest);
-    Fase 1 acceptance criterion mandates a vitest suite covering every API route.
+    Vitest es el runner definido en docs/SPEC.md §12, pero el scaffold monorepo todavía no
+    existe (borde wipe/scaffold: el usuario crea apps/web + apps/api + raíz workspaces antes
+    de U2), así que aún no hay comando de test a nivel workspace. Strict TDD sigue en false;
+    re-evaluar con `npm test` tras el scaffold y en cada unidad de Fase B.
   projects: []
   test_layers:
-    - path: "."
+    - path: "packages/shared"
       layer: Unit
       available: false
-      tool: "— (vitest planned in Fase 1)"
-    - path: "."
+      tool: "vitest (SPEC §12: evaluateScore puro — polarity, weight, threshold, mode, preset 8)"
+    - path: "apps/api"
       layer: Integration
       available: false
-      tool: "—"
-    - path: "."
-      layer: E2E
+      tool: "vitest + fastify.inject (SPEC §12: suite por API route; test de aislamiento RLS en U2)"
+    - path: "apps/web"
+      layer: Unit
       available: false
-      tool: "— (playwright planned in Fase 4)"
+      tool: "vitest (componentes mínimos; Playwright E2E post-MVP)"
   coverage:
     - path: "."
       available: false
@@ -43,11 +44,11 @@ testing:
     - path: "."
       tool: Linter
       available: false
-      command: "—"
+      command: "— (llega con el scaffold: ESLint en apps/web)"
     - path: "."
       tool: Type checker
       available: false
-      command: "— (TypeScript strict mandated by SPEC.md §2, arrives with Fase 0 scaffold)"
+      command: "— (TypeScript strict, SPEC §3 — llega con el scaffold)"
     - path: "."
       tool: Formatter
       available: false
@@ -55,25 +56,26 @@ testing:
 
 rules:
   proposal:
-    - Scope to SPEC.md §1 (V1) only; §9 roadmap items are explicitly out of scope for V1.
+    - Scope to docs/SPEC.md §0 (fuera de alcance en MVP) y §1; ML/ONNX (D9) y roadmap quedan fuera del MVP.
     - Include rollback plan for risky changes (schema or data-migration changes).
     - Respect delivery strategy ask-always: stop and ask if the forecast exceeds 400 review-budget lines.
   specs:
-    - Use Given/When/Then for scenarios.
+    - Use Given/When/Then for scenarios (DADO/CUANDO/ENTONCES en los docs en español).
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
-    - Align with docs/SPEC.md contracts (§3 schema, §4 API table, §5 UI).
+    - Align with docs/SPEC.md contracts (§4 modelo de datos, §7 API surface, §8 UI, §10 capacidades).
   design:
-    - Document architecture decisions with rationale (stack is fixed by SPEC.md §2; no substitutions).
-    - Include sequence diagrams for complex flows (drag & drop optimistic PATCH, import flow).
+    - Document architecture decisions with rationale (stack fijado por SPEC §3/D13 y topología D16; sin sustituciones).
+    - Include sequence diagrams for complex flows (transacción withTenant + SET LOCAL app.current_tenant, import CSV tolerante, evaluateScore).
   tasks:
-    - Group by phase per SPEC.md §8 (Fase 0–4), use hierarchical numbering.
+    - Group by phase per SPEC.md §13 (U2–U9; U2b es cambio separado), use hierarchical numbering.
     - Keep tasks completable in one session.
-    - Never substitute forbidden tech: Prisma, Redux/Zustand.
+    - Never substitute forbidden tech: Supabase, Vercel, Prisma, Redux/Zustand, @dnd-kit, tabla `leads`.
   apply:
     guidelines:
       - Follow existing code patterns; TypeScript strict mode at all times.
-      - Validate every API route and form with the shared zod schema (lib/schemas/lead.ts).
-      - Re-run strict_tdd resolution once vitest lands (Fase 1) with a workspace-level test command.
+      - Validate every API route and form with the zod schemas from packages/shared (una sola fuente de tipos web ↔ api).
+      - All data access through withTenant(); score SIEMPRE derivado de score_criteria (cero booleanos por fila de negocio).
+      - Re-run strict_tdd resolution once the workspace scaffold exists with a root `npm test` (vitest).
     tdd: false
     test_command: ""
   verify:

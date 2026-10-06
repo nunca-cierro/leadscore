@@ -1,278 +1,331 @@
-# LeadScore — Spec de Desarrollo (SDD)
-### CRM de prospección con scoring automático — de nuncacierro.com
+# leadscore — Especificación del producto
 
----
+> **⚠️ OVERRIDE (2026-10-05, U1) — lee esto primero:** este documento reemplaza **por completo** la especificación anterior. El producto viejo (CRM Kanban con `@dnd-kit`, tabla única `leads`, Supabase, deploy en Vercel, route handlers de Next) está **retirado**: no hay Kanban, no hay drag & drop, no hay Supabase, no hay Vercel. Cualquier sección previa (resumen / alcance / stack / `leads` / API routes / UI Kanban / migración / env / fases / roadmap / desviaciones) queda anulada. Contrato de producto: `openspec/changes/prospeccion/proposal.md` (D1–D16, U1–U9).
 
-## 0. Resumen ejecutivo
+## 0. Portada e intención
 
-**Qué es:** Reemplazo del Google Sheet actual de prospección de nuncacierro por una app web (Kanban + scoring automático) que permite capturar, calificar y avanzar leads (restaurantes, spas, barberías, etc.) hacia el cierre de venta.
+**leadscore = motor de prospección y calificación de negocios para vender servicios de NuncaCierro.** Entrada manual o por CSV → checks de presencia digital → score configurable → cola priorizada → outreach manual → outcome (cliente sí/no) → contador de resultados → dataset para ML futuro.
 
-**Por qué:** Hoy el scoring (8 criterios booleanos) y el movimiento entre estados se hacen a mano en Sheets. Automatizar el scoring y visualizar el pipeline como Kanban acelera la operación y es reusable como producto (SaaS) para otros negocios que hacen outbound.
+**Prioridad D15 (ordena todos los tradeoffs):**
 
-**V1 = uso interno para nuncacierro, un solo usuario (Nicolas).** Multiusuario/SaaS queda completamente fuera de alcance (sección 1): no hay roadmap prometido, ni `owner_id`, ni RLS en V1.
+| # | Prioridad | Significado |
+|---|-----------|-------------|
+| 1 | Negocio NuncaCierro | Herramienta para conseguir leads y clientes reales |
+| 2 | Portfolio | Beneficio colateral, no objetivo |
+| 3 | Escala / SaaS | Opción futura; los seams (tenancy, RLS, `source_channel`) ya están puestos sin construir la plataforma |
 
----
+**Doble uso:** herramienta interna de NuncaCierro + pieza de portfolio con estándar de seguridad alto (multi-tenant-ready desde U2, aunque el MVP corre con 1 tenant y 1 usuario).
 
-## 1. Alcance
+**Fuera de alcance en el MVP:** ML (ONNX/PyTorch, `ml_score` — slice futuro D9), Kanban/@dnd-kit, multiusuario con invites/billing, automatización de riesgo ToS (cold WhatsApp automation, scraping de Instagram), Playwright E2E (post-MVP), Supabase/Vercel/Prisma/Redux.
 
-### Dentro del alcance (V1)
-- CRUD de leads (crear, editar, mover de estado, eliminar)
-- Scoring automático calculado desde 8 booleanos (idéntico a las columnas del Sheet actual)
-- Vista Kanban por estado: Pendiente → Contactado → En Conversación → Cliente / Descartado
-- Vista de detalle de lead (notas, historial de fecha de contacto, próxima acción)
-- Filtros: por vertical, ciudad, score mínimo, estado
-- Importación inicial de los leads existentes del Sheet (migración one-time)
-- Autenticación simple (un solo usuario: Nicolas — login con email/password vía sesión propia: cookie httpOnly firmada + password con argon2id)
-- Deploy self-hosted en Hetzner (Docker Compose + Caddy), con Postgres corriendo en contenedor propio en el mismo servidor
-
-### Fuera de alcance (V1) — no construir todavía
-- Scraping/enriquecimiento automático de Instagram/web (ver sección 9, roadmap)
-- Multiusuario / equipos / roles
-- Notificaciones automáticas (email/WhatsApp)
-- Facturación y métricas de negocio (la hoja "schedule" del Sheet) — módulo aparte, futuro
-- App móvil
-
----
-
-## 2. Stack técnico (fijo, no negociable para el orquestador)
-
-| Capa | Tecnología | Versión / notas |
-|---|---|---|
-| Frontend | Next.js (App Router) | v14+, TypeScript estricto |
-| Estilos | Tailwind CSS | sin librerías de componentes pesadas |
-| Drag & drop Kanban | `@dnd-kit/core` | más liviano que react-beautiful-dnd |
-| Backend | Next.js Route Handlers (`/app/api/*`) | sin servidor separado |
-| Base de datos | Postgres (contenedor propio en Hetzner, Docker Compose) | una sola instancia compartida con el resto de servicios del servidor; accedida solo server-side |
-| Auth | Sesión propia (cookie httpOnly firmada + argon2id) | un solo usuario en V1: no hace falta un proveedor de auth |
-| Cliente DB | `pg` (pool server-side) | la DB se habla solo desde Route Handlers; el navegador nunca conecta a la DB |
-| Hosting | Self-hosted Hetzner (Docker Compose + Caddy) | las env vars se gestionan en el entorno de despliegue (.env del servidor / secrets de GitHub Actions) |
-| Validación | `zod` | en cada API route y formulario |
-| Testing | `vitest` (unit) + `playwright` (e2e básico) | mínimo indispensable, ver sección 8 (Fases 1 y 4) |
-
-**Restricción explícita:** no usar Prisma (evitar una capa extra sobre Postgres en V1), no usar Redux/Zustand (el estado del Kanban se maneja con Server Components + `useOptimistic` o SWR).
-
----
-
-## 3. Modelo de datos
-
-> El DDL completo vive en `db/migrations/0001_init.sql` (Postgres vanilla, sin dependencias de ningún BaaS). Se aplica contra el contenedor propio con `psql "$DATABASE_URL" -f db/migrations/0001_init.sql`. No hay RLS ni `owner_id`: V1 es de un solo usuario y la DB solo se toca desde el backend.
-
-### Tabla `leads`
-
-```sql
-create table leads (
-  id uuid primary key default gen_random_uuid(),
-  nombre text not null,
-  vertical text not null check (vertical in ('restaurante','salud_estetica','barberia','hotel','gimnasio','otro')),
-  ciudad text not null default 'Bogotá',
-  whatsapp text,
-  instagram text,
-  correo text,
-  estado text not null default 'pendiente'
-    check (estado in ('pendiente','contactado','en_conversacion','cliente','descartado')),
-  fecha_contacto timestamptz,
-  proxima_accion text,
-
-  -- criterios de scoring (booleanos, idénticos al Sheet)
-  mas_2_sedes boolean not null default false,
-  mas_4_5_estrellas boolean not null default false,
-  mas_500_followers_ig boolean not null default false,
-  post_constante boolean not null default false,
-  sin_sitio_web boolean not null default false,
-  sin_respuesta_wa boolean not null default false,
-  tiene_catalogo boolean not null default false,
-  tiene_equipo boolean not null default false,
-
-  -- score derivado (0-8): columna GENERATED ALWAYS AS ... STORED, NO editable manualmente
-  score integer generated always as (
-    (mas_2_sedes::int + mas_4_5_estrellas::int + mas_500_followers_ig::int +
-     post_constante::int + sin_sitio_web::int + sin_respuesta_wa::int +
-     tiene_catalogo::int + tiene_equipo::int)
-  ) stored,
-
-  notas text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index idx_leads_estado on leads(estado);
-create index idx_leads_vertical on leads(vertical);
-create index idx_leads_score on leads(score desc);
-```
-
-### Trigger `updated_at`
-```sql
-create or replace function set_updated_at()
-returns trigger as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger trg_leads_updated_at
-  before update on leads
-  for each row execute function set_updated_at();
-```
-
----
-
-## 4. Contratos de API (Route Handlers)
-
-Rutas de leads bajo `/app/api/leads/`; la autenticación vive en `/api/auth/`. Todas devuelven JSON. Todas requieren sesión autenticada (verificar la sesión propia — cookie httpOnly firmada — al inicio de cada handler, devolver 401 si no hay sesión), excepto el login. El acceso a la DB es siempre server-side vía pool `pg`; el navegador nunca habla con la base de datos.
-
-| Método | Ruta | Body / Query | Respuesta | Notas |
-|---|---|---|---|---|
-| POST | `/api/auth/login` | `{ email, password }` | `204` + `Set-Cookie` (httpOnly) | única ruta sin sesión previa; 401 en credenciales inválidas; sin registro público (usuario seed) |
-| GET | `/api/leads` | query: `estado?`, `vertical?`, `score_min?`, `ciudad?` | `Lead[]` | filtros combinables |
-| GET | `/api/leads/:id` | — | `Lead` | 404 si no existe |
-| POST | `/api/leads` | `LeadInput` (zod schema, sin `id`/`score`) | `Lead` (201) | valida con zod antes de insertar |
-| PATCH | `/api/leads/:id` | `Partial<LeadInput>` | `Lead` | usado para mover de estado (drag&drop) y editar campos |
-| DELETE | `/api/leads/:id` | — | `{ success: true }` (204) | soft-delete NO es necesario en V1 |
-| POST | `/api/leads/import` | `{ rows: LeadInput[] }` | `{ imported: number, errors: [...] }` | usado una sola vez para migrar el Sheet |
-
-**Schema zod `LeadInput`** (debe vivir en `lib/schemas/lead.ts` y ser importado tanto por el frontend como por las API routes, sin duplicar):
-
-```ts
-export const LeadInputSchema = z.object({
-  nombre: z.string().min(1),
-  vertical: z.enum(['restaurante','salud_estetica','barberia','hotel','gimnasio','otro']),
-  ciudad: z.string().default('Bogotá'),
-  whatsapp: z.string().optional(),
-  instagram: z.string().url().optional().or(z.literal('')),
-  correo: z.string().email().optional().or(z.literal('')),
-  estado: z.enum(['pendiente','contactado','en_conversacion','cliente','descartado']).default('pendiente'),
-  fecha_contacto: z.string().datetime().optional(),
-  proxima_accion: z.string().optional(),
-  mas_2_sedes: z.boolean().default(false),
-  mas_4_5_estrellas: z.boolean().default(false),
-  mas_500_followers_ig: z.boolean().default(false),
-  post_constante: z.boolean().default(false),
-  sin_sitio_web: z.boolean().default(false),
-  sin_respuesta_wa: z.boolean().default(false),
-  tiene_catalogo: z.boolean().default(false),
-  tiene_equipo: z.boolean().default(false),
-  notas: z.string().optional(),
-});
-```
-
----
-
-## 5. UI / Frontend
-
-### 5.1 Página principal `/` (protegida, redirige a `/login` si no hay sesión)
-- El guard lo hace el middleware propio de sesión (cookie httpOnly): sin sesión válida → redirect a `/login`
-- Layout: barra superior con filtros (vertical, ciudad, score mínimo) + botón "Nuevo lead"
-- Tablero Kanban con 5 columnas (una por `estado`), cada tarjeta muestra: nombre, vertical (chip de color), score como badge visual (ej. círculo con "7/8"), próxima acción
-- Drag & drop entre columnas → dispara `PATCH /api/leads/:id` con el nuevo `estado`, optimista en UI (no esperar respuesta para mover la tarjeta)
-- Click en tarjeta → abre panel lateral (Sheet/Drawer) con detalle completo y formulario de edición
-
-### 5.2 Página `/login`
-- Formulario simple email/password contra el endpoint propio de login (`POST /api/auth/login`)
-- Sin registro público (el usuario único se crea en el seed inicial: script `db/seed` o `INSERT` manual)
-
-### 5.3 Componente de badge de score
-- Visual tipo gauge/círculo de progreso (0-8), color semáforo: rojo (0-3), amarillo (4-6), verde (7-8)
-- Reusa esta lógica de color en un solo lugar (`lib/scoring.ts`), no la dupliques en componentes
-
-### 5.4 Responsive
-- Mobile: columnas del Kanban se muestran como tabs horizontales en vez de scroll lateral infinito
-
----
-
-## 6. Migración de datos existentes
-
-Antes de dar por cerrada la Fase 1, el agente encargado debe:
-1. Exportar la hoja `leads` del Google Sheet a CSV
-2. Escribir un script one-time (`scripts/migrate-sheet.ts`) que lea el CSV, transforme cada fila al `LeadInputSchema`, y haga POST a `/api/leads/import`
-3. Mapeo de campos Sheet → DB:
-   - `Estado` del Sheet usa "Descartado", "Contactado", "En Conversación", "Pendiente" → normalizar a los valores en minúscula/snake_case del enum (`descartado`, `contactado`, `en_conversacion`, `pendiente`)
-   - `Score` del sheet (ej. "7/8") se ignora — se recalcula solo desde los booleanos
-   - Verificar manualmente después de migrar que el conteo de leads importados coincide con las filas no vacías del Sheet
-
----
-
-## 7. Variables de entorno
+## 1. Flujo completo
 
 ```
-DATABASE_URL=            # server-side ONLY (pool de pg en las Route Handlers)
-SESSION_SECRET=          # server-side ONLY (firma de la cookie de sesión)
-NEXT_PUBLIC_SITE_URL=    # única candidata a NEXT_PUBLIC_* (URL pública del sitio)
+captura → checks → score → cola → outreach manual → outcome → contador → dataset ML futuro
 ```
 
-Todas se gestionan **manualmente** en el entorno de despliegue (archivo `.env` del servidor / secrets de GitHub Actions) — no las inyecta ninguna integración — y el agente de deploy debe verificar que existan **ahí** antes de hacer el primer deploy a producción.
+| # | Etapa | Qué ocurre | Persistencia |
+|---|-------|------------|--------------|
+| 1 | Captura | Alta manual (Maps/IG → form) o import de CSV de scraper | `businesses` (+`source_channel`) |
+| 2 | Checks | Auto: HTTP de sitio, detección `wa.me`, Facebook. Manual: IG followers/posts, team, catálogo | `analysis_checks` |
+| 3 | Score | `evaluateScore()` puro sobre `score_criteria` activos (polarity/weight/threshold/mode) | `score_evaluations` (`source='rules'`) |
+| 4 | Cola | Tabla ordenada por score, dropdown de estado, filtros | UI (`apps/web`) |
+| 5 | Outreach | **Manual**: saludo frío SIN oferta (asistencia de redacción, nunca automatizado) | `outreach` |
+| 6 | Outcome | Cliente sí/no registrado a mano | `outcomes` |
+| 7 | Contador | Contactados / cerrados / tasa, desglosado por `source_channel` | derivado de `outcomes` |
+| 8 | Dataset | Evaluaciones + outcomes quedan listos para re-ranking ML híbrido | futuro (D9) |
 
-> `DATABASE_URL` y `SESSION_SECRET` **nunca** van bajo `NEXT_PUBLIC_*`: cualquier `NEXT_PUBLIC_*` queda expuesta en el bundle del cliente. Ninguna credencial de la DB sale del servidor.
+Invariantes del flujo: el score **nunca** se guarda como booleanos por fila de negocio; el outreach **nunca** se envía automáticamente; el contador es **siempre** derivado, nunca contado a mano.
 
----
+## 2. Captura (D4 / D14)
 
-## 8. Plan de fases para el orquestador (asignación a subagentes)
+Dos vías de entrada, ambas convergen en `businesses` con `source_channel` (`referral | partner | maps-csv | inbound | ads`):
 
-> Cada fase tiene un criterio de aceptación explícito. El orquestador no debe avanzar a la siguiente fase sin que el criterio se cumpla.
+1. **Manual:** encontrar negocio en Google Maps o Instagram → formulario de alta → checks → score.
+2. **Scraper externo → CSV → import:** exportar con una herramienta tipo **Outscraper** (pay-as-you-go, ~USD 3/1k, primeros 500 gratis — referencia, no dependencia) → subir CSV → parser tolerante → filas en `businesses`. El import es la costura universal: sirve para la semilla real y para cualquier export futuro.
 
-### Fase 0 — Setup de infraestructura
-**Agente: `infra`**
-- Crear la base de datos en el contenedor Postgres propio (Docker Compose del servidor) y aplicar `db/migrations/0001_init.sql` con `psql "$DATABASE_URL" -f db/migrations/0001_init.sql` (tabla + índices + trigger)
-- Proyecto Next.js con TypeScript + Tailwind *(hecho: scaffold commiteado)*
-- Escribir `Dockerfile` multi-stage con `output: 'standalone'` de Next.js
-- Agregar el servicio de la app **y el servicio `postgres`** al Docker Compose del servidor, y la ruta correspondiente en Caddy (reverse proxy con Let's Encrypt)
-- Crear el workflow de GitHub Actions que despliega en el servidor (con los secrets `DATABASE_URL` y `SESSION_SECRET` definidos ahí)
-- **Criterio de aceptación:** `npm run dev` levanta la app localmente sin error; deploy inicial ("Hello World") visible en https://leadscore.nuncacierro.com
+### 2.1 Mapeo de columnas (CSV real del usuario, 24 columnas)
 
-### Fase 1 — Backend (API routes)
-**Agente: `backend`**
-- Implementar las 6 rutas de la sección 4, con el schema zod compartido y pool `pg` server-side
-- Implementar middleware de sesión propia (401 si no hay cookie válida) en cada ruta
-- **Criterio de aceptación:** suite de tests con `vitest` cubre cada ruta (happy path + 401 + 400 por validación fallida) y pasa en verde
+Header real: `Id,Nombre,Vertical,Ciudad,Score,WhatsApp,Instagram,Correo,Estado,Fecha de contacto,Próxima acción,>2 sedes,>4.5 estrellas,>500 follow Ig,Post constante,Sin sitio web,Sin rta Wa,Catalog,Team,Notes,,Campo,Propósito y Formato,Comportamiento`
 
-### Fase 2 — Frontend (Kanban)
-**Agente: `frontend`**
-- Implementar página `/login`
-- Implementar tablero Kanban con drag&drop (sección 5.1)
-- Implementar panel de detalle/edición de lead
-- Implementar filtros
-- **Criterio de aceptación:** flujo manual completo (login → crear lead → arrastrar entre columnas → editar → ver cambio persistido tras refresh) funciona sin errores en consola
+| # | Columna CSV | Destino | Nota |
+|---|-------------|---------|------|
+| 1 | `Id` | `businesses.external_id` | Referencia del export; única por tenant |
+| 2 | `Nombre` | `businesses.name` | Obligatorio |
+| 3 | `Vertical` | `businesses.vertical` | Texto normalizado (ej. `restaurant`, `estetica`) |
+| 4 | `Ciudad` | `businesses.city` | |
+| 5 | `Score` | *no se importa* | Se **recalcula** con el preset → `score_evaluations` |
+| 6 | `WhatsApp` | `businesses.whatsapp` | Normalizar a `wa.me/<número>` si aplica |
+| 7 | `Instagram` | `businesses.instagram_url` | Handle o URL |
+| 8 | `Correo` | `businesses.email` | |
+| 9 | `Estado` | `businesses.status` | Mapear valor → enum (`new/contacted/client/discarded`) |
+| 10 | `Fecha de contacto` | `outreach.sent_at` | Crea el primer registro de `outreach` |
+| 11 | `Próxima acción` | `businesses.next_action` | Texto libre |
+| 12 | `>2 sedes` | criterio `multi_site` → `score_evaluations.criteria` | TRUE/FALSE = `met` directo |
+| 13 | `>4.5 estrellas` | criterio `rating_45` | ídem |
+| 14 | `>500 follow Ig` | criterio `ig_followers_500` | ídem |
+| 15 | `Post constante` | criterio `ig_posting` | ídem |
+| 16 | `Sin sitio web` | criterio `no_website` (inverso) | TRUE = cumple = suma punto |
+| 17 | `Sin rta Wa` | criterio `no_wa_reply` (inverso) | ídem |
+| 18 | `Catalog` | criterio `has_catalog` | |
+| 19 | `Team` | criterio `has_team` | |
+| 20 | `Notes` | `businesses.notes` | |
+| 21 | *(vacía)* | — | Separador: fin de datos |
+| 22–24 | `Campo`, `Propósito y Formato`, `Comportamiento` | — | **Doc-columns embebidas: se descartan sin error** |
 
-### Fase 3 — Migración de datos
-**Agente: `data`**
-- Ejecutar el proceso de la sección 6
-- **Criterio de aceptación:** número de leads en la app == número de filas no vacías del Sheet original; spot-check manual de 3 leads al azar comparando todos los campos
+Reglas del parser (U4): tolerar **filas multilínea** (celdas con saltos entre comillas), header real = 24 columnas, columnas 22–24 ignoradas, errores por fila reportados sin abortar el lote. En import, TRUE/FALSE del CSV es el resultado del criterio (`met`); la `polarity` aplica a la señal **cruda** de los checks automáticos.
 
-### Fase 4 — QA y deploy final
-**Agente: `qa`**
-- Correr `playwright` con al menos 2 flujos e2e: login+crear lead, mover lead de estado
-- Verificar que la sesión propia bloquea el acceso sin cookie (probar con `curl` sin cookie de sesión)
-- **Criterio de aceptación:** ambos tests e2e pasan; request sin auth a `/api/leads` devuelve 401
+## 3. Arquitectura (D13)
 
-**El producto final entregado al usuario debe incluir:** URL de producción (https://leadscore.nuncacierro.com), credenciales del único usuario (email, no la password en texto plano — se comunica aparte), y este documento actualizado con cualquier decisión tomada durante la implementación que se haya desviado del spec.
+Monorepo **npm workspaces** — árbol objetivo EXACTO:
 
----
+```
+leadscore/
+├── package.json                 # "workspaces": ["apps/*", "packages/*"]
+├── apps/
+│   ├── web/                     # Next.js — SOLO UI (nunca importa pg ni toca la DB)
+│   │   └── app/                 # (login) rutas por path: /, /demo, /crm/* (host único D16)
+│   └── api/                     # Fastify + TypeScript — dueño ÚNICO de DB/auth/negocio
+│       ├── src/                 # routes/, services/, db/ (helper withTenant)
+│       └── db/migrations/0001_init.sql
+└── packages/
+    └── shared/                  # schemas zod + evaluateScore() puro (web ↔ api)
+```
 
-## 9. Fuera del MVP pero documentado para no perder de vista (roadmap)
+Comandos orientativos de scaffold (D8: **el usuario los ejecuta a mano**; la IA solo valida la estructura antes de U2):
 
-1. **Enriquecimiento automático:** cron job en el servidor (n8n ya corre en la misma máquina Hetzner, o un timer de systemd) que visita Instagram/web del lead y auto-marca los booleanos de scoring, eliminando el llenado manual
-2. **Métricas de negocio:** portar la hoja "schedule" del Sheet (facturación, cobros pendientes) como módulo separado, reusando la misma base de datos
-3. **Notificaciones:** WhatsApp/email automático cuando un lead lleva X días en "Esperando respuesta"
+```bash
+npm init -y && npm pkg set private=true
+# package.json raíz → "workspaces": ["apps/*", "packages/*"]
+npx create-next-app@latest apps/web        # TypeScript, App Router
+mkdir -p apps/api && cd apps/api && npm init -y
+npm i fastify @fastify/cors pg zod argon2 && npm i -D typescript vitest
+mkdir -p packages/shared && cd ../../packages/shared && npm init -y && npm i zod
+```
 
-No implementar nada de esta sección en V1. Se documenta aquí para que el orquestador no lo mezcle con el alcance actual: la arquitectura de datos de V1 es de un solo usuario (sin `owner_id`, sin RLS).
+### 3.1 Reglas innegociables
 
----
+| Regla | Detalle |
+|-------|---------|
+| Fetch HTTP | Siempre `fetch(url, { credentials: 'include' })` desde `apps/web` |
+| zod | Solo vive en `packages/shared` — una sola fuente de tipos para web y api |
+| Datos | SOLO vía helper central `withTenant()` → transacción + `SET LOCAL app.current_tenant` |
+| Score | SIEMPRE derivado de `score_criteria`; **cero** booleanos por fila de negocio |
+| Fronteras | `apps/web` nunca importa `pg`/drivers; toda query de negocio nace en `apps/api` |
+| Prohibido | Supabase, Vercel, Prisma, Redux/Zustand, `@dnd-kit`, tabla `leads` |
 
-## Decisiones de implementación (desviaciones del spec)
+## 4. Modelo de datos
 
-Dos desviaciones, ambas con fecha 2026-10-02: el hosting original (Vercel Hobby) se reemplaza por self-hosted, y Supabase se retira del stack por completo. Detalle a continuación.
+Migración única: `apps/api/db/migrations/0001_init.sql` (rewrite in-place, D7). **9 tablas**:
 
-| Aspecto | Detalle |
-|---|---|
-| **Fecha** | 2026-10-02 |
-| **Decisión** | Self-hosted en el servidor Hetzner existente (Ubuntu, Docker Compose + Caddy como reverse proxy con Let's Encrypt, DNS vía Cloudflare proxy) |
-| **Motivo** | Centralizar la infraestructura en un servidor ya existente y operado (mismo stack que NuncaCierro); se elimina la dependencia de una plataforma externa adicional |
-| **Subdominio** | leadscore.nuncacierro.com |
-| **Impacto** | Las variables de entorno ya no las inyecta ninguna integración: se gestionan en el entorno de despliegue (`.env` del servidor / secrets de GitHub Actions). El cron del roadmap pasa de Vercel Cron a n8n/systemd en el servidor |
+| Tabla | Columnas clave |
+|-------|----------------|
+| `tenants` | `id`, `slug` (**`demo` reservado**), `name`, `created_at` |
+| `users` | `id`, `tenant_id NOT NULL`, `email` único, `password_hash` (argon2id) |
+| `sessions` | `id`, `tenant_id NOT NULL`, `user_id`, `token_hash`, `expires_at` |
+| `businesses` | `id`, `tenant_id NOT NULL`, `external_id`, `name`, `vertical`, `city`, `whatsapp`, `instagram_url`, `email`, `status`, `source_channel`, `next_action`, `notes` |
+| `analysis_checks` | `id`, `tenant_id NOT NULL`, `business_id`, `check_type`, `result jsonb`, `checked_at` |
+| `score_criteria` | `id`, `tenant_id NOT NULL`, `key`, `label`, `polarity`, `weight`, `threshold`, `mode`, `enabled`, `position` |
+| `score_evaluations` | `id`, `tenant_id NOT NULL`, `business_id`, `source` (`rules/ml/hybrid`), `value`, `criteria jsonb`, `created_at` |
+| `outreach` | `id`, `tenant_id NOT NULL`, `business_id`, `channel`, `draft`, `sent_at`, `created_at` |
+| `outcomes` | `id`, `tenant_id NOT NULL`, `business_id`, `result` (`client/no_client`), `notes`, `created_at` |
 
-| Aspecto | Detalle |
-|---|---|
-| **Fecha** | 2026-10-02 |
-| **Decisión** | Supabase reemplazado por Postgres self-hosted + auth de sesión propia |
-| **Motivo** | Centralización total en Hetzner + V1 single-user hace innecesario PostgREST/GoTrue/RLS |
-| **Impacto** | Ver secciones afectadas: §1 (alcance/auth), §2 (stack: fila DB/Auth/cliente), §3 (schema sin RLS ni `owner_id`, migración movida a `db/migrations/0001_init.sql` aplicada con psql), §4 (handlers con verificación de sesión propia + pool `pg`), §5 (login contra `POST /api/auth/login`), §7 (env vars `DATABASE_URL`/`SESSION_SECRET`), §8 (Fase 0 sobre el contenedor propio), §9 (roadmap sin Multiusuario/SaaS). Código: eliminados `lib/supabase/`, `lib/database.types.ts` y el directorio `supabase/`; dependencia `@supabase/supabase-js` fuera de `package.json` |
+Reglas de aislamiento (D11):
+
+- `tenant_id NOT NULL` en **todas** las tablas de dominio (incluida la join a `tenants`).
+- RLS con **`FORCE ROW LEVEL SECURITY`** aplicadas dentro de `0001_init.sql`.
+- Políticas **default-deny**: `USING (tenant_id = current_setting('app.current_tenant', true)::uuid)` — si el tenant es `NULL` (rutas públicas sin sesión), la comparación es `NULL` → **0 filas**.
+- Toda query pasa por `withTenant()`; ninguna ruta escribe fuera de esa transacción.
+- El tenant `demo` queda reservado para `/demo` y `/api/classify`; el CRM real usa el tenant seed (`nuncacierro`).
+- El score de la cola = último `score_evaluations.value` con `source='rules'`.
+
+## 5. Auth (D5)
+
+| Pieza | Decisión |
+|-------|----------|
+| Credenciales | Cookie `__Host-ls_session` (el prefijo `__Host-` la hace **rechazable por el navegador** si falta `Secure`, `Path=/` o tiene `Domain`): token firmado, `HttpOnly`, `SameSite=Lax`, `Secure`, `Path=/`, sin `Domain` |
+| Password | **argon2id** (nunca MD5/SHA crudo) |
+| Sesión | Fila en `sessions` con `tenant_id` + `user_id` + `expires_at` |
+| Guard | Middleware en `apps/api`: sin sesión válida → **401** en toda ruta CRM; allowlist pública = `/api/classify`, `/api/demo/*`, `/health` |
+| Seed | 1 tenant (`nuncacierro`) + 1 usuario desde env (`SEED_USER_EMAIL` / `SEED_USER_PASSWORD`) |
+| CORS dev | **Único escenario con CORS:** allowlist `http://localhost:3000` (+ puertos web), `credentials: true` (nunca `*` con credentials) |
+| CORS prod | Single-origin (D16 opción D, path routing en Caddy): web y API comparten origen ⇒ **sin cabeceras CORS** en prod; el navegador no las exige |
+
+Verificación mínima de U3: login → cookie → `GET /api/auth/me` 200 → `GET /api/businesses` 200 → sin cookie = 401.
+
+## 6. Topología de URLs (D16 — obligatoria, opción D)
+
+**UN solo hostname** `leadscore.nuncacierro.com` (registro único **PROXIED** en Cloudflare) sirve **todo** mediante **path routing en Caddy**. Motivo: Universal SSL free solo cubre subdominios de **un** nivel — un subdominio anidado (`app.leadscore.*`) NO obtendría certificado válido. Los subdominios `app.leadscore.*` y `api.leadscore.*` **NO existen** y no deben referenciarse.
+
+| Ruta | Contenido | Auth |
+|------|-----------|------|
+| `/` | **Landing pública de venta**: qué es, motor en acción, CTA | No |
+| `/demo` | **Demo interactivo**: cola, criterios activables, contador, con datos seed/sintéticos | No |
+| `/crm/*` | **CRM real** (`apps/web`) | Sí |
+| `/api/*` | **API** (`apps/api`) → `reverse_proxy` al contenedor Fastify | Sí (rutas CRM) |
+
+- **Caddy** = único punto de entrada: enruta `/`, `/demo` y `/crm/*` al front (Next) y `/api/*` (más `/health`) al contenedor Fastify.
+- **Single-origin ⇒ CORS cero en prod** (solo dev lo necesita, §5); cookies host-only con semántica `__Host-` válidas sin ajustes; la IP del origen queda oculta tras Cloudflare.
+- **DNS:** registro `A` raíz → IP del server, **PROXIED** (creado 2026-10-05); con la topología D **no se requieren registros adicionales**.
+- `/demo` y `/api/classify` están bindeados al tenant `demo` reservado: sin sesión, sin datos reales.
+
+## 7. API surface (`apps/api`, Fastify)
+
+Convención: JSON, zod en cada frontera (schemas de `shared`), errores `{ error, details? }`.
+
+| Método | Ruta | Codes | Grupo |
+|--------|------|-------|-------|
+| POST | `/api/auth/login` | 201 cookie · 400 zod · 401 credenciales | auth |
+| POST | `/api/auth/logout` | 204 · 401 | auth |
+| GET | `/api/auth/me` | 200 · 401 | auth |
+| GET | `/api/businesses` (sort/vertical/city/status) | 200 · 401 | intake/queue |
+| POST | `/api/businesses` | 201 · 400 · 401 | intake |
+| GET | `/api/businesses/:id` | 200 · 401 · 404 | intake |
+| PATCH | `/api/businesses/:id` | 200 · 400 · 401 · 404 | intake/queue |
+| POST | `/api/businesses/import` (CSV) | 201 + resumen · 400 filas inválidas · 401 | intake |
+| GET | `/api/score/criteria` | 200 · 401 | scoring |
+| POST | `/api/score/criteria` | 201 · 400 · 401 | scoring |
+| PATCH | `/api/score/criteria/:id` | 200 · 400 · 401 · 404 | scoring |
+| POST | `/api/score/evaluate/:businessId` | 200 `value+breakdown` · 401 · 404 | scoring |
+| GET | `/api/checks/:businessId` | 200 · 401 · 404 | checks |
+| POST | `/api/checks/run/:businessId` (HTTP, wa.me, FB) | 200 resultados · 401 · 404 | checks |
+| GET | `/api/outreach?businessId=` | 200 · 401 | outreach |
+| POST | `/api/outreach/:businessId/draft` (saludo frío) | 200 texto · 401 · 404 · 422 si incluye oferta | outreach |
+| POST | `/api/outreach/:businessId/contacted` | 200 · 401 · 404 | outreach |
+| POST | `/api/outreach/:businessId/outcome` | 201 · 400 · 401 · 409 si ya cerrado | outcomes |
+| GET | `/api/metrics/results` (total + por canal) | 200 · 401 | reporting |
+| GET | `/api/demo/queue` (tenant `demo`) | 200 · 429 | público |
+| POST | `/api/classify` (público, **rate-limit por IP**) | 200 score · 400 · **429** | público |
+
+## 8. UI MVP (`apps/web`)
+
+- **Tabla única ordenada por score desc** — sin Kanban, sin `@dnd-kit` (D1).
+- **Dropdown de estado** por fila: `new → contacted → client / discarded` (edición inline → `PATCH /api/businesses/:id`).
+- **Filtros:** vertical · ciudad · estado.
+- **Form de criterios:** CRUD de `score_criteria` (polarity, weight, threshold, mode, enabled) + botón «re-evaluar».
+- **Alta de negocio:** name, vertical, city, canales + **`source_channel` obligatorio** (D14).
+- **Contador de resultados (D12):** tira visible en la cola — contactados · cerrados · tasa, **desglosada por `source_channel`** (referidos vs maps-csv vs otros) — derivado de `outcomes` (D12/D14).
+- Vistas públicas (U9): landing `/`, demo `/demo` con motor en acción + CTA.
+
+## 9. Preset de criterios (D2 — 8 criterios Excel)
+
+| key | label | polarity | weight | threshold | mode |
+|-----|-------|----------|--------|-----------|------|
+| `multi_site` | Más de 2 sedes | positive | 1 | 2 | manual |
+| `rating_45` | Rating > 4.5 | positive | 1 | 4.5 | manual |
+| `ig_followers_500` | +500 followers IG | positive | 1 | 500 | manual |
+| `ig_posting` | Posteo constante | positive | 1 | — | manual |
+| `no_website` | Sin sitio web | **inverse** | 1 | — | **auto** (check HTTP) |
+| `no_wa_reply` | Sin respuesta WhatsApp | **inverse** | 1 | — | manual |
+| `has_catalog` | Tiene catálogo | positive | 1 | — | manual |
+| `has_team` | Tiene equipo | positive | 1 | — | manual |
+
+- `positive` = suma cuando la señal cruda cumple; `inverse` = suma cuando la señal **no** se cumple (los dos únicos inversos: `no_website`, `no_wa_reply`).
+- Preset con `weight=1` → score = `n/8`, igual que el Excel. Todos `enabled=true`.
+- `mode=auto` consume `analysis_checks`; `mode=manual` se captura/edita en la UI. Checks (Facebook, etc.) pueden existir sin criterio asociado.
+- Fórmula: `value = Σ weight(met)` · `max = Σ weight(enabled)` → persistido en `score_evaluations`.
+
+## 10. Capacidades (contrato Given/When/Then)
+
+### business-intake
+Alta manual y por CSV con `source_channel` y mapeo de columnas.
+- **DADO** un negocio encontrado en Maps — **CUANDO** se da de alta vía form con canal `referral` — **ENTONCES** nace `status='new'`, aparece en la cola y responde 201.
+- **DADO** el CSV real de 24 columnas con filas multilínea — **CUANDO** se importa — **ENTONCES** se crean los ~12 negocios, las doc-columns (22–24) se ignoran sin error y el detalle de filas malformadas se reporta sin abortar el lote.
+
+### digital-presence-checks
+Checks auto (HTTP, wa.me, Facebook) + manuales, con `checked_at`/payload.
+- **DADO** un negocio sin sitio web — **CUANDO** corre `POST /api/checks/run/:id` — **ENTONCES** se registra `check_type=http_site` fallido con timestamp en `analysis_checks`.
+- **DADO** un negocio con checks ya registrados — **CUANDO** se repite el run — **ENTONCES** se añaden registros nuevos con `checked_at` actualizado (historial, no sobrescritura).
+
+### configurable-scoring
+Tabla de criterios (polarity/weight/threshold/mode/enabled), preset de 8, evaluación `rules`.
+- **DADO** el preset de 8 criterios — **CUANDO** se evalúa un negocio con 5 criterios cumplidos — **ENTONCES** devuelve `value=5`, `max=8` y el desglose por criterio.
+- **DADO** un criterio `rating_45` con threshold 4.5 — **CUANDO** la señal cruda es 4.3 — **ENTONCES** el criterio NO cumple y el score baja; cambiar `enabled=false` lo excluye del `max`.
+- **DADO** un criterio con `mode=manual` sin dato — **CUANDO** se evalúa — **ENTONCES** cuenta como no cumplido y queda marcado como pendiente en el breakdown.
+
+### prioritized-queue
+Tabla UI ordenada por score, dropdown de estado, filtros (vertical/ciudad/estado).
+- **DADO** varios negocios con scores 7, 4, 6 — **CUANDO** se abre la cola — **ENTONCES** se listan 7, 6, 4 (score desc) sin drag & drop.
+- **DADO** un negocio `new` — **CUANDO** se cambia a `contacted` por dropdown — **ENTONCES** persiste vía PATCH, devuelve 200 y la fila refleja el nuevo estado.
+
+### outreach-outcomes
+Asistencia de saludo frío (sin oferta), registro de contacto y outcome cliente sí/no → dataset.
+- **DADO** un negocio en la cola — **CUANDO** se pide un draft — **ENTONCES** devuelve un saludo frío sin propuesta comercial (200); si el texto incluye oferta, el validador responde 422.
+- **DADO** un negocio contactado — **CUANDO** se registra outcome `client` — **ENTONCES** el estado pasa a `client`, nace la fila en `outcomes` y el contador de cerrados sube 1.
+- **DADO** un negocio ya cerrado — **CUANDO** se intenta otro outcome — **ENTONCES** responde 409 (no se pisa un cierre).
+
+### demo-and-classify
+Landing de venta en root + `/demo` público con datos sintéticos + `/api/classify` público rate-limited — sin autenticación (D16).
+- **DADO** un visitante sin sesión en `leadscore.nuncacierro.com` — **CUANDO** abre `/demo` — **ENTONCES** ve cola, criterios activables y contador con datos del tenant `demo` (nunca datos reales).
+- **DADO** un cliente HTTP — **CUANDO** llama `POST /api/classify` 11 veces en la ventana (límite 10) — **ENTONCES** las 10 primeras responden 200 y la 11ª responde **429** (fixed window por IP, en memoria).
+- **DADO** un bug hipotético en ruta pública — **CUANDO** consulta con tenant NULL — **ENTONCES** RLS devuelve **0 filas** (default-deny).
+
+### session-auth
+Login httpOnly + argon2id sobre `users`, sesiones con `tenant_id`, guard 401 y aislamiento por tenant — una sola cuenta activa en el MVP.
+- **DADO** credenciales válidas — **CUANDO** se hace login — **ENTONCES** se setea cookie `HttpOnly` y `/api/auth/me` responde 200 con el `tenant_id` de la sesión.
+- **DADO** una cookie ausente o expirada — **CUANDO** se llama cualquier ruta CRM — **ENTONCES** responde 401 (sin body de datos).
+- **DADO** una query ejecutada sin `SET LOCAL app.current_tenant` — **CUANDO** pasa por RLS `FORCE` — **ENTONCES** devuelve 0 filas aunque la conexión sea de superuser.
+
+### results-reporting
+Métricas de conversión (contactados/cerrados/tasa) derivadas de `outcomes`, con desglose por `source_channel`, en la cola y en el demo.
+- **DADO** 10 contactados y 3 cerrados — **CUANDO** se llama `GET /api/metrics/results` — **ENTONCES** responde `contacted=10`, `closed=3`, `rate=0.3`.
+- **DADO** cerrados repartidos por canal — **CUANDO** se pide el desglose — **ENTONCES** devuelve `by_channel[]` con tasa por `referral/partner/maps-csv/inbound/ads` y subtotal `total`.
+- **DADO** el visitante del `/demo` — **CUANDO** ve el contador — **ENTONCES** muestra las mismas métricas calculadas sobre datos del tenant `demo`.
+
+## 11. Variables de entorno
+
+| Var | Workspace | Ejemplo / nota | Necesaria en |
+|-----|-----------|----------------|--------------|
+| `DATABASE_URL` | `apps/api` | `postgres://user:pass@localhost:5432/leadscore` | U2 |
+| `SESSION_SECRET` | `apps/api` | secreto de firma de cookie (≥32 bytes) | U3 |
+| `SEED_USER_EMAIL` / `SEED_USER_PASSWORD` | `apps/api` | cuenta única del MVP | U3 |
+| `CORS_ORIGINS` | `apps/api` | `http://localhost:3000` (allowlist, dev) | U3 |
+| `CLASSIFY_RATE_LIMIT` / `CLASSIFY_RATE_WINDOW` | `apps/api` | `10` / `60000` (fixed window por IP) | U9 |
+| `DEMO_TENANT_ID` | `apps/api` | UUID del tenant `demo` (alimenta `/demo` y `/api/classify`) | U4/U9 |
+| `NEXT_PUBLIC_API_URL` | `apps/web` | dev `http://localhost:8080`; prod mismo origen `https://leadscore.nuncacierro.com` (`/api/*` vía Caddy) | U7 |
+| `NODE_ENV` | `ambos` | `development` \| `production` (prod: cookies `Secure`; CORS solo en dev) | U3 |
+| `API_PORT` | `apps/api` | `8080` (puerto Fastify; coherente con `NEXT_PUBLIC_API_URL`) | U2 |
+
+Nota: `.env` real es gitignored; `.env.example` (49 líneas) documenta estas claves exactas (U1).
+
+## 12. Testing
+
+- **vitest por unidad** (raíz: `npm test` ejecuta workspaces), mínimo por cada API route nueva.
+- `packages/shared`: tests unitarios puros de `evaluateScore` (polarity, weight, threshold, mode, preset 8, inversos).
+- `apps/api`: tests de ruta con `fastify.inject`; **test de aislamiento RLS** (sin tenant o tenant ajeno → 0 filas) en U2.
+- `apps/web`: tests de componentes mínimos; **Playwright E2E queda para post-MVP**.
+- Cada unidad debe dejar su suite verde antes del PR.
+
+## 13. Unidades (Fase A docs → scaffold del usuario → Fase B código)
+
+| Unit | Contenido | Fase |
+|------|-----------|------|
+| **U1** | Rewrite `docs/SPEC.md` (este doc) + `openspec/config.yaml` + `.env.example` | A (docs) |
+| — | **BORDE:** usuario scaffoldea `apps/web` + `apps/api` + raíz workspaces; IA valida estructura | transición |
+| **U2** | `0001_init.sql` (9 tablas + RLS FORCE) + schemas zod en shared + `withTenant()` | B |
+| **U2b** | Hetzner/Docker/Caddy/GH Actions + DNS → **CAMBIO SEPARADO** (después de U2–U3) | infra |
+| **U3** | Auth: login/session/argon2id + guard 401 + seed 1 tenant + 1 usuario | B |
+| **U4** | Seed import CSV (parser tolerante) + datos sintéticos `/demo` | B |
+| **U5** | Motor de score: CRUD criterios + evaluación rules + preset 8 + `/api/score/*` | B |
+| **U6** | Checks auto (HTTP, wa.me, FB) + runner server-side → `analysis_checks` | B |
+| **U7** | UI MVP: tabla + dropdown + form criterios + alta negocio + contador por canal | B |
+| **U8** | Outreach: saludo frío (sin oferta) + captura outcome + export dataset | B |
+| **U9** | Landing `/` + `/demo` + `/api/classify` (rate limit) sobre tenant `demo` | B |
+
+Rollback Fase A: `git reset --hard 5f9ae83`. Cada unidad de Fase B = 1 PR convencional atómico (U2 y U7 pueden partirse en 2 PRs encadenados). ML = change separado cuando exista dataset de outcomes (D9).
+
+## 14. Criterios de éxito
+
+- [ ] `docs/SPEC.md` describe el producto nuevo — **cero** referencias a Kanban / `@dnd-kit` / Supabase / Vercel / tabla `leads`.
+- [ ] Estructura monorepo exacta: `apps/web` (solo UI) + `apps/api` (dueño de DB) + `packages/shared` (zod + `evaluateScore`).
+- [ ] `0001_init.sql` crea las 9 tablas con `tenant_id NOT NULL` y RLS `FORCE` default-deny; sin booleanos de score por fila de negocio.
+- [ ] Test de aislamiento: sin tenant o con tenant ajeno → 0 filas.
+- [ ] Seed: ~12 negocios reales importados con sus 8 criterios; `/demo` sirve datos sintéticos sin auth.
+- [ ] Cola ordenada por score con dropdown de estado + contador contactados/cerrados/tasa desglosado por canal.
+- [ ] Landing en root muestra el sistema por dentro sin autenticación (datos seed, contador, CTA) + `/demo` interactivo.
+- [ ] `/api/classify` responde con rate limit (429); rutas CRM devuelven 401 sin sesión.
+- [ ] `npm test` (vitest) verde por unidad; cada unidad ≤ 400 líneas cambiadas o partida en sub-PRs.
+
+## 15. Próximo paso
+
+Aprobar U1 → el usuario scaffoldea `apps/web` + `apps/api` + raíz workspaces (§3) → la IA valida la estructura → arranca **U2** (schema + RLS + zod + `withTenant`).
