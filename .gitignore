@@ -40,3 +40,6 @@ next-env.d.ts
 
 # atl cache
 .atl/.skill-registry.cache.json
+
+# data — leads reales del negocio, nunca suben al repo (tests usan fixture sintético)
+docs/*.csv
