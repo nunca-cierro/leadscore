@@ -16,39 +16,54 @@ projects: []
 
 testing:
   strict_tdd: false
-  detected: 2026-10-05
+  strict_tdd_rationale: >-
+    Re-evaluado el 2026-10-06 con el scaffold U0 operativo y se mantiene false: el header de
+    tasks.md lo vincula — test-first por unidad (test antes que su implementación), sin ciclo
+    RED/GREEN formal obligatorio.
+  detected: 2026-10-06
   note: >-
-    Vitest es el runner definido en docs/SPEC.md §12, pero el scaffold monorepo todavía no
-    existe (borde wipe/scaffold: el usuario crea apps/web + apps/api + raíz workspaces antes
-    de U2), así que aún no hay comando de test a nivel workspace. Strict TDD sigue en false;
-    re-evaluar con `npm test` tras el scaffold y en cada unidad de Fase B.
+    Tras U0 (2026-10-06) el scaffold está operativo: raíz `npm test` delega en workspaces con
+    `--workspaces --if-present` (2 tests verdes: api /health vía fastify.inject + shared smoke),
+    typecheck y lint verdes en 3 workspaces, runtime verificado (api :8080 /health 200,
+    web :3000 200). Pendientes: specs de apps/web (script `test` llega en U7), integration con
+    DB real + RLS (U2), E2E Playwright (post-MVP). Dependencias saneadas el mismo día (2026-10-06):
+    `npm ls` exit 0 — typescript único 5.9.3 deduped en los 4 nodos (huérfano 7.0.2 podado) y
+    spec de vitest de packages/shared a ^5.0.3; detalle y evidencia en docs/bitacora/U0-scaffold.md §5.6.
   projects: []
   test_layers:
     - path: "packages/shared"
       layer: Unit
-      available: false
-      tool: "vitest (SPEC §12: evaluateScore puro — polarity, weight, threshold, mode, preset 8)"
+      available: true
+      tool: "vitest 5.0.3 (2026-10-06: smoke.test.ts verde; tests de evaluateScore llegan en U2 2.7)"
+    - path: "apps/api"
+      layer: Unit
+      available: true
+      tool: "vitest 5.0.3 + fastify.inject sin DB (2026-10-06: GET /health verde; suites por ruta U3-U9)"
     - path: "apps/api"
       layer: Integration
       available: false
-      tool: "vitest + fastify.inject (SPEC §12: suite por API route; test de aislamiento RLS en U2)"
+      tool: "DB de test real (dbmate up + withTenant + aislamiento RLS) — planned en U2 (2.1/2.8)"
     - path: "apps/web"
       layer: Unit
       available: false
-      tool: "vitest (componentes mínimos; Playwright E2E post-MVP)"
+      tool: "vitest 5.0.3 registrado en vitest.workspace.ts; sin script `test` ni specs aún — llega en U7 (7.1)"
+    - path: "."
+      layer: E2E
+      available: false
+      tool: "Playwright post-MVP (SPEC §12); smoke público con fastify.inject en U9 (9.6)"
   coverage:
     - path: "."
       available: false
-      command: "—"
+      command: "— (sin cobertura configurada; coverage_threshold: 0)"
   quality_tools:
     - path: "."
       tool: Linter
-      available: false
-      command: "— (llega con el scaffold: ESLint en apps/web)"
+      available: true
+      command: "npm run lint — ESLint flat en apps/api, apps/web, packages/shared (verde 2026-10-06)"
     - path: "."
       tool: Type checker
-      available: false
-      command: "— (TypeScript strict, SPEC §3 — llega con el scaffold)"
+      available: true
+      command: "npm run typecheck — tsc --noEmit en 3 workspaces (verde 2026-10-06; tsc 5.9.3 unificado en los 3 workspaces)"
     - path: "."
       tool: Formatter
       available: false

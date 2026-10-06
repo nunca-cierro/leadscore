@@ -286,7 +286,7 @@ Métricas de conversión (contactados/cerrados/tasa) derivadas de `outcomes`, co
 | `NODE_ENV` | `ambos` | `development` \| `production` (prod: cookies `Secure`; CORS solo en dev) | U3 |
 | `API_PORT` | `apps/api` | `8080` (puerto Fastify; coherente con `NEXT_PUBLIC_API_URL`) | U2 |
 
-Nota: `.env` real es gitignored; `.env.example` (49 líneas) documenta estas claves exactas (U1).
+Nota: `.env` real es gitignored; `.env.example` (45 líneas) documenta estas claves exactas (U1).
 
 ## 12. Testing
 

@@ -47,8 +47,8 @@ Chain strategy: pending
 
 ## U0 — Borde: scaffold del usuario (Fase A → Fase B)
 
-- [ ] **0.1** (U0 · **OWNER: USER**) Scaffoldear monorepo según SPEC §13 / design §4: `package.json` raíz (workspaces `apps/*`, `packages/*`, scripts dev/build/test/lint/typecheck), `tsconfig.base.json`, `vitest.workspace.ts`, `apps/web` (Next.js App Router), `apps/api` (Fastify + TS, `createApp()` separado de `listen`), `packages/shared`, ESLint flat por paquete, `.env` gitignored. La IA NO edita este scaffold. — Dep: ninguno — ~2.500 líneas (usuario)
-- [ ] **0.2** (U0 · IA) Validar estructura vs design §4 (árbol, scripts, TS strict, `apps/web` sin import `pg`, `apps/api` sin React, `packages/shared` sin I/O), verificar `.env.example` SIN `EVO_API_KEY` (§7) y con `DEMO_TENANT_ID`/`CLASSIFY_*`, re-evaluar `strict_tdd` en `openspec/config.yaml` con `npm test` raíz operativo. — AC (borde): SPEC §14 "Estructura monorepo exacta" — Dep: 0.1 — ~5 líneas
+- [x] **0.1** (U0 · **OWNER: USER**) Scaffoldear monorepo según SPEC §13 / design §4: `package.json` raíz (workspaces `apps/*`, `packages/*`, scripts dev/build/test/lint/typecheck), `tsconfig.base.json`, `vitest.workspace.ts`, `apps/web` (Next.js App Router), `apps/api` (Fastify + TS, `createApp()` separado de `listen`), `packages/shared`, ESLint flat por paquete, `.env` gitignored. La IA NO edita este scaffold. — Dep: ninguno — ~2.500 líneas (usuario)
+- [x] **0.2** (U0 · IA) Validar estructura vs design §4 (árbol, scripts, TS strict, `apps/web` sin import `pg`, `apps/api` sin React, `packages/shared` sin I/O), verificar `.env.example` SIN `EVO_API_KEY` (§7) y con `DEMO_TENANT_ID`/`CLASSIFY_*`, re-evaluar `strict_tdd` en `openspec/config.yaml` con `npm test` raíz operativo. — AC (borde): SPEC §14 "Estructura monorepo exacta" — Dep: 0.1 — ~5 líneas
 
 ## U2 — Esquema + migración dbmate + RLS + withTenant + shared + docs
 
