@@ -61,6 +61,7 @@ Chain strategy: pending
 - [x] **2.7** (U2) `packages/shared/src/scoring.ts` + `packages/shared/src/scoring.test.ts`: `evaluateScore()` puro — `value=Σweight(met)`, `max=Σweight(enabled)`, threshold vs señal cruda, `inverse` suma SOLO si la señal NO cumple, `mode=manual` sin dato → `met:false, pending:true`; tests preset 8 sin I/O. — AC: configurable-scoring:evaluate-5-de-8, :threshold-deshabilitado, :manual-sin-dato, :criterio-inverso (nivel unidad) — Dep: 0.2 — ~170 líneas
 - [x] **2.8** (U2 · verify) `npx dbmate up` sobre DB de test + correr 2.1 → verde en las 9 tablas con superuser. — AC: session-auth:rls-sin-tenant, session-auth:tenant-ajeno, demo-and-classify:publica-tenant-null-0 — Dep: 2.1–2.5 (**parcial WU1**: `pool`+`withTenant` mínimo implementado como soporte de 2.1; la validación zod de 2.5 queda en WU2 — ver desviación declarada) — ~10 líneas
 - [x] **2.9** (U2 · **docs-enmienda**) `docs/SPEC.md`: §4 "migración única … rewrite in-place" → "migraciones versionadas vía dbmate (`new`/`up`/`rollback`); `0001_init.sql` es la primera"; §7 añadir superficie `DELETE /api/score/criteria/:id`. Solo docs (§7 decisiones binding). — Dep: 2.2 — ~10 líneas
+- [x] **2.10** (U2 · **infra-packaging**) Empaquetado dual src/dist de `@leadscore/shared` (hallazgo F-W2-1 / issue #5): `main`/`types`/`exports` → `dist` por defecto (`default` para node en prod) + condición `development` → `src/index.ts` (la honra vitest/vite nativamente); `paths` en `apps/api/tsconfig.json` → fuente viva para `tsx` (dev) y `tsc --noEmit` (typecheck); `composite` + `build: tsc -b` en shared; `apps/api/tsconfig.build.json` con `references` (shared se compila primero — el `--workspaces` de raíz no es topológico) y `rootDir` de emit separado del config de typecheck (paths mete shared src en el programa → TS6059 si `rootDir` vive en el config de typecheck). — **Sin escenario GWT** (infraestructura, como 0.1/0.2; no toca lógica de negocio) — Dep: 2.5 — ~35 líneas (config/scripts)
 
 ## U3 — Auth: login, sesión, guard 401, seed usuario
 
@@ -154,5 +155,5 @@ Chain strategy: pending
 | 33 | results-reporting:by-channel-desglose | 7.3, 8.1, 8.3 |
 | 34 | results-reporting:visitante-demo-contador | 2.4, 9.1, 9.4, 9.5 |
 
-**Totals:** 43 tareas (U0:2, U2:9, U3:5, U4:6, U5:3, U6:3, U7:5, U8:4, U9:6) · 20/20 requisitos · 34/34 escenarios cubiertos · 1 sola docs-enmienda (2.9) · 1 tarea user-owned (0.1).
+**Totals:** 44 tareas (U0:2, U2:10, U3:5, U4:6, U5:3, U6:3, U7:5, U8:4, U9:6) · 20/20 requisitos · 34/34 escenarios cubiertos · 1 sola docs-enmienda (2.9) · 1 tarea user-owned (0.1) · 2.10 sin escenario GWT (infra, como 0.1/0.2).
 
