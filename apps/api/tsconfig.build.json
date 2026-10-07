@@ -3,5 +3,5 @@
   "compilerOptions": {
     "rootDir": "src"
   },
-  "references": [{ "path": "../../packages/shared" }]
+  "references": [{ "path": "../../packages/shared/tsconfig.build.json" }]
 }
