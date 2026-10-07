@@ -12,6 +12,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@leadscore/shared": "1.0.0",
     "fastify": "^5.12.5",
     "pg": "^8.23.1"
   },
