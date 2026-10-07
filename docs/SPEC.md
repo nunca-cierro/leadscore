@@ -116,7 +116,7 @@ mkdir -p packages/shared && cd ../../packages/shared && npm init -y && npm i zod
 
 ## 4. Modelo de datos
 
-Migración única: `apps/api/db/migrations/0001_init.sql` (rewrite in-place, D7). **9 tablas**:
+Migraciones versionadas vía dbmate (`dbmate new` / `up` / `rollback`); `db/migrations/0001_init.sql` es la primera (D7). **9 tablas**:
 
 | Tabla | Columnas clave |
 |-------|----------------|
@@ -186,6 +186,7 @@ Convención: JSON, zod en cada frontera (schemas de `shared`), errores `{ error,
 | GET | `/api/score/criteria` | 200 · 401 | scoring |
 | POST | `/api/score/criteria` | 201 · 400 · 401 | scoring |
 | PATCH | `/api/score/criteria/:id` | 200 · 400 · 401 · 404 | scoring |
+| DELETE | `/api/score/criteria/:id` | 204 · 401 · 404 | scoring |
 | POST | `/api/score/evaluate/:businessId` | 200 `value+breakdown` · 401 · 404 | scoring |
 | GET | `/api/checks/:businessId` | 200 · 401 · 404 | checks |
 | POST | `/api/checks/run/:businessId` (HTTP, wa.me, FB) | 200 resultados · 401 · 404 | checks |
