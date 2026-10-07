@@ -4,7 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",
-    "rootDir": "src"
+    "paths": {
+      "@leadscore/shared": ["../../packages/shared/src/index.ts"]
+    }
   },
   "include": ["src"]
 }
